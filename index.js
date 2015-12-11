@@ -6,6 +6,7 @@ var async = module.parent.require('async'),
 	cron = require('cron').CronJob,
 	toMarkdown = require('to-markdown'),
 	S = require('string'),
+	shorturl = require('short-url'),
 
 	nconf = module.parent.require('nconf'),
 	meta = module.parent.require('./meta'),
@@ -26,7 +27,7 @@ var async = module.parent.require('async'),
 	cronJobs.push(new cron('0 0/12 * * *', function() { pullFeedsInterval(60 * 12); }, null, false));
 	cronJobs.push(new cron('0 0 * * *', function() { pullFeedsInterval(60 * 24); }, null, false));
 
-	plugins.isActive('nodebb-plugin-rss', function(err, active) {
+	plugins.isActive('nodebb-plugin-better-rss', function(err, active) {
 		if (err) {
 			return winston.error(err.stack);
 		}
@@ -44,10 +45,10 @@ var async = module.parent.require('async'),
 
 	module.init = function(params, callback) {
 
-		params.router.get('/admin/plugins/rss', params.middleware.applyCSRF, params.middleware.admin.buildHeader, renderAdmin);
-		params.router.get('/api/admin/plugins/rss', params.middleware.applyCSRF, renderAdmin);
+		params.router.get('/admin/plugins/better-rss', params.middleware.applyCSRF, params.middleware.admin.buildHeader, renderAdmin);
+		params.router.get('/api/admin/plugins/better-rss', params.middleware.applyCSRF, renderAdmin);
 
-		params.router.post('/api/admin/plugins/rss/save', params.middleware.applyCSRF, save);
+		params.router.post('/api/admin/plugins/better-rss/save', params.middleware.applyCSRF, save);
 
 		callback();
 	};
@@ -65,7 +66,7 @@ var async = module.parent.require('async'),
 				return next(err);
 			}
 			results.csrf = req.csrfToken();
-			res.render('admin/plugins/rss', results);
+			res.render('admin/plugins/better-rss', results);
 		});
 	}
 
@@ -144,7 +145,7 @@ var async = module.parent.require('async'),
 
 		getFeedByGoogle(feed.url, feed.entriesToPull, function(err, entries) {
 			if (err) {
-				winston.error('[[nodebb-plugin-rss:error]] Error pulling feed ' + feed.url, err.message);
+				winston.error('[[nodebb-plugin-better-rss:error]] Error pulling feed ' + feed.url, err.message);
 				return callback();
 			}
 
@@ -162,7 +163,7 @@ var async = module.parent.require('async'),
 					if(entryDate > mostRecent) {
 						mostRecent = entryDate;
 					}
-					winston.info('[plugin-rss] posting, ' + feed.url + ' - title: ' + entry.title + ', published date: ' + entry.publishedDate);
+					winston.info('[plugin-better-rss] posting, ' + feed.url + ' - title: ' + entry.title + ', published date: ' + entry.publishedDate);
 					postEntry(feed, entry, next);
 				} else {
 					next();
@@ -170,7 +171,7 @@ var async = module.parent.require('async'),
 			}, function(err) {
 				// only save lastEntryDate if it has changed
 				if (mostRecent > feed.lastEntryDate) {
-					db.setObjectField('nodebb-plugin-rss:feed:' + feed.url, 'lastEntryDate', mostRecent, callback);
+					db.setObjectField('nodebb-plugin-better-rss:feed:' + feed.url, 'lastEntryDate', mostRecent, callback);
 				} else {
 					callback();
 				}
@@ -198,29 +199,33 @@ var async = module.parent.require('async'),
 			if (settings.collapseWhiteSpace) {
 				content = S(content).collapseWhitespace().s;
 			}
+			shorturl.shorten(entry.link, function(err, url) {
+				if(!err)
+					content+="<br />link originale: "+url;
+				content = toMarkdown(content);
 
-			content = toMarkdown(content);
+				var topicData = {
+					uid: uid,
+					title: entry.title,
+					content: content,
+					cid: feed.category,
+					tags: tags
+				};
 
-			var topicData = {
-				uid: uid,
-				title: entry.title,
-				content: content,
-				cid: feed.category,
-				tags: tags
-			};
+				topics.post(topicData, function(err, result) {
+					if (err) {
+						winston.error(err.message);
+						return callback();
+					}
 
-			topics.post(topicData, function(err, result) {
-				if (err) {
-					winston.error(err.message);
-					return callback();
-				}
-
-				if (feed.timestamp === 'feed') {
-					setTimestampToFeedPublishedDate(result, entry);
-				}
-				var max = Math.max(parseInt(meta.config.postDelay, 10) || 10, parseInt(meta.config.newbiePostDelay, 10) || 10) + 1;
-				user.setUserField(uid, 'lastposttime', Date.now() - max * 1000, callback);
+					if (feed.timestamp === 'feed') {
+						setTimestampToFeedPublishedDate(result, entry);
+					}
+					var max = Math.max(parseInt(meta.config.postDelay, 10) || 10, parseInt(meta.config.newbiePostDelay, 10) || 10) + 1;
+					user.setUserField(uid, 'lastposttime', Date.now() - max * 1000, callback);
+				});
 			});
+
 		});
 	}
 
@@ -269,7 +274,7 @@ var async = module.parent.require('async'),
 
 	admin.menu = function(custom_header, callback) {
 		custom_header.plugins.push({
-			route: '/plugins/rss',
+			route: '/plugins/better-rss',
 			icon: 'fa-rss',
 			name: 'RSS'
 		});
@@ -278,13 +283,13 @@ var async = module.parent.require('async'),
 	};
 
 	admin.getFeeds = function(callback) {
-		db.getSetMembers('nodebb-plugin-rss:feeds', function(err, feedUrls) {
+		db.getSetMembers('nodebb-plugin-better-rss:feeds', function(err, feedUrls) {
 			if (err) {
 				return callback(err);
 			}
 
 			async.map(feedUrls, function (feedUrl, next) {
-				db.getObject('nodebb-plugin-rss:feed:' + feedUrl, next);
+				db.getObject('nodebb-plugin-better-rss:feed:' + feedUrl, next);
 			}, function(err, results) {
 				if (err) {
 					return callback(err);
@@ -301,7 +306,7 @@ var async = module.parent.require('async'),
 	};
 
 	admin.getSettings = function(callback) {
-		db.getObject('nodebb-plugin-rss:settings', function(err, settings) {
+		db.getObject('nodebb-plugin-better-rss:settings', function(err, settings) {
 			if (err) {
 				return callback(err);
 			}
@@ -314,11 +319,11 @@ var async = module.parent.require('async'),
 
 	admin.saveSettings = function(data, callback) {
 		settings.collapseWhiteSpace = data.collapseWhiteSpace;
-		db.setObject('nodebb-plugin-rss:settings', settings, function(err) {
+		db.setObject('nodebb-plugin-better-rss:settings', settings, function(err) {
 			if (err) {
 				return callback(err);
 			}
-			pubsub.publish('nodebb-plugin-rss:settings', settings);
+			pubsub.publish('nodebb-plugin-better-rss:settings', settings);
 			callback();
 		});
 	};
@@ -330,10 +335,10 @@ var async = module.parent.require('async'),
 			}
 			async.parallel([
 				function(next) {
-					db.setObject('nodebb-plugin-rss:feed:' + feed.url, feed, next);
+					db.setObject('nodebb-plugin-better-rss:feed:' + feed.url, feed, next);
 				},
 				function(next) {
-					db.setAdd('nodebb-plugin-rss:feeds', feed.url, next);
+					db.setAdd('nodebb-plugin-better-rss:feeds', feed.url, next);
 				}
 			], next);
 		}, callback);
@@ -341,7 +346,7 @@ var async = module.parent.require('async'),
 
 	function deleteFeeds(callback) {
 		callback = callback || function() {};
-		db.getSetMembers('nodebb-plugin-rss:feeds', function(err, feeds) {
+		db.getSetMembers('nodebb-plugin-better-rss:feeds', function(err, feeds) {
 			if (err || !feeds || !feeds.length) {
 				return callback(err);
 			}
@@ -349,10 +354,10 @@ var async = module.parent.require('async'),
 			async.each(feeds, function(key, next) {
 				async.parallel([
 					function(next) {
-						db.delete('nodebb-plugin-rss:feed:' + key, next);
+						db.delete('nodebb-plugin-better-rss:feed:' + key, next);
 					},
 					function(next) {
-						db.setRemove('nodebb-plugin-rss:feeds', key, next);
+						db.setRemove('nodebb-plugin-better-rss:feeds', key, next);
 					}
 				], next);
 			}, callback);
@@ -361,35 +366,35 @@ var async = module.parent.require('async'),
 
 	function deleteSettings(callback) {
 		callback = callback || function() {};
-		db.delete('nodebb-plugin-rss:settings', callback);
+		db.delete('nodebb-plugin-better-rss:settings', callback);
 	}
 
-	pubsub.on('nodebb-plugin-rss:activate', function() {
+	pubsub.on('nodebb-plugin-better-rss:activate', function() {
 		reStartCronJobs();
 	});
 
-	pubsub.on('nodebb-plugin-rss:deactivate', function() {
+	pubsub.on('nodebb-plugin-better-rss:deactivate', function() {
 		stopCronJobs();
 	});
 
-	pubsub.on('nodebb-plugin-rss:settings', function(newSettings) {
+	pubsub.on('nodebb-plugin-better-rss:settings', function(newSettings) {
 		settings = newSettings;
 	});
 
 	admin.activate = function(id) {
-		if (id === 'nodebb-plugin-rss') {
-			pubsub.publish('nodebb-plugin-rss:activate');
+		if (id === 'nodebb-plugin-better-rss') {
+			pubsub.publish('nodebb-plugin-better-rss:activate');
 		}
 	};
 
 	admin.deactivate = function(id) {
-		if (id === 'nodebb-plugin-rss') {
-			pubsub.publish('nodebb-plugin-rss:deactivate');
+		if (id === 'nodebb-plugin-better-rss') {
+			pubsub.publish('nodebb-plugin-better-rss:deactivate');
 		}
 	};
 
 	admin.uninstall = function(id) {
-		if (id === 'nodebb-plugin-rss') {
+		if (id === 'nodebb-plugin-better-rss') {
 			deleteFeeds();
 			deleteSettings();
 		}

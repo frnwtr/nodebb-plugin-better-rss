@@ -6,7 +6,7 @@ To customise options for the parser, please consult the "RSS" page in the admini
 
 ## Installation
 
-    npm install nodebb-plugin-rss
+    npm install nodebb-plugin-better-rss
 
 ## Usage
 
